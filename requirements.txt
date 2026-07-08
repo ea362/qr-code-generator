@@ -1,0 +1,6 @@
+pillow==12.3.0
+pypng==0.20220715.0
+python-dotenv==1.2.2
+qrcode==8.2
+typing_extensions==4.16.0
+validators==0.35.0
