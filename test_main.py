@@ -7,14 +7,12 @@ from datetime import datetime
 import logging
 import os
 
-# Import the module to test
 import main
 
 
 class TestQRCodeGenerator(unittest.TestCase):
 
     def setUp(self):
-        """Reset logging configuration before each test to avoid side effects."""
         logging.root.handlers = []
         logging.basicConfig(level=logging.INFO)
 
@@ -51,10 +49,10 @@ class TestQRCodeGenerator(unittest.TestCase):
     # ----------------------------------------------------------------------
     # Test generate_qr_code
     # ----------------------------------------------------------------------
+    @patch('pathlib.Path.open', new_callable=mock_open)  # <-- FIXED: mock Path.open
     @patch('main.qrcode.QRCode')
     @patch('main.is_valid_url')
-    @patch('builtins.open', new_callable=mock_open)
-    def test_generate_qr_code_success(self, mock_file, mock_is_valid, mock_qr_class):
+    def test_generate_qr_code_success(self, mock_is_valid, mock_qr_class, mock_path_open):
         mock_is_valid.return_value = True
         mock_qr_instance = MagicMock()
         mock_qr_class.return_value = mock_qr_instance
@@ -69,8 +67,8 @@ class TestQRCodeGenerator(unittest.TestCase):
         mock_qr_instance.add_data.assert_called_once_with('http://example.com')
         mock_qr_instance.make.assert_called_once_with(fit=True)
         mock_qr_instance.make_image.assert_called_once_with(fill_color='blue', back_color='yellow')
-        mock_file.assert_called_once_with(path, 'wb')
-        mock_img.save.assert_called_once_with(mock_file())
+        mock_path_open.assert_called_once_with(path, 'wb')  # verify Path.open was called
+        mock_img.save.assert_called_once_with(mock_path_open.return_value.__enter__.return_value)
 
     @patch('main.qrcode.QRCode')
     @patch('main.is_valid_url')
@@ -99,8 +97,12 @@ class TestQRCodeGenerator(unittest.TestCase):
     @patch('main.create_directory')
     @patch('main.generate_qr_code')
     @patch('main.Path.cwd')
-    @patch.dict(os.environ, {'QR_CODE_DIR': 'test_dir', 'FILL_COLOR': 'green', 'BACK_COLOR': 'black'})
     def test_main_defaults_and_env_vars(self, mock_cwd, mock_generate, mock_create_dir, mock_datetime, mock_args):
+        # Override module-level variables (they are set at import time)
+        main.QR_DIRECTORY = 'test_dir'
+        main.FILL_COLOR = 'green'
+        main.BACK_COLOR = 'black'
+
         mock_args.return_value = argparse.Namespace(url='https://github.com/kaw393939')
         mock_cwd.return_value = Path('/fake/cwd')
         fixed_time = datetime(2026, 7, 8, 12, 0, 0)
@@ -124,8 +126,12 @@ class TestQRCodeGenerator(unittest.TestCase):
     @patch('main.create_directory')
     @patch('main.generate_qr_code')
     @patch('main.Path.cwd')
-    @patch.dict(os.environ, {'QR_CODE_DIR': 'custom_qr', 'FILL_COLOR': 'red', 'BACK_COLOR': 'white'})
     def test_main_with_custom_url_and_colors(self, mock_cwd, mock_generate, mock_create_dir, mock_args):
+        # Override module-level variables for this test
+        main.QR_DIRECTORY = 'custom_qr'
+        main.FILL_COLOR = 'red'
+        main.BACK_COLOR = 'white'
+
         custom_url = 'https://example.com'
         mock_args.return_value = argparse.Namespace(url=custom_url)
         mock_cwd.return_value = Path('/fake/cwd')
@@ -151,33 +157,31 @@ class TestQRCodeGenerator(unittest.TestCase):
     def test_main_handles_generate_exception(self, mock_cwd, mock_generate, mock_create_dir, mock_args):
         mock_args.return_value = argparse.Namespace(url='http://example.com')
         mock_cwd.return_value = Path('/fake/cwd')
-        # Simulate a logged error inside generate_qr_code (it catches all exceptions)
         with patch.object(main, 'generate_qr_code', wraps=main.generate_qr_code) as wrapped_generate:
             def side_effect(*args, **kwargs):
                 logging.error("Simulated error in generate_qr_code")
             wrapped_generate.side_effect = side_effect
-            main.main()  # Should not raise
+            main.main()
             wrapped_generate.assert_called_once()
 
     # ----------------------------------------------------------------------
-    # Test environment variable fallback
+    # Test environment variable fallback (via reload)
     # ----------------------------------------------------------------------
     @patch.dict(os.environ, {}, clear=True)
     def test_env_variable_defaults(self):
         import importlib
         import main as main_module
-        importlib.reload(main_module)
+        importlib.reload(main_module)  # re‑evaluate constants from empty environ
         self.assertEqual(main_module.QR_DIRECTORY, 'qr_codes')
         self.assertEqual(main_module.FILL_COLOR, 'red')
         self.assertEqual(main_module.BACK_COLOR, 'white')
 
     # ----------------------------------------------------------------------
-    # Test setup_logging (simplified to avoid type-checker warnings)
+    # Test setup_logging
     # ----------------------------------------------------------------------
     def test_setup_logging(self):
         logging.root.handlers = []
         main.setup_logging()
-        # Verify that at least one StreamHandler has been added
         self.assertTrue(
             any(isinstance(h, logging.StreamHandler) for h in logging.root.handlers),
             "No StreamHandler found after setup_logging()"
